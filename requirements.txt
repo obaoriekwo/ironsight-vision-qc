@@ -1,0 +1,20 @@
+# Core ML
+tensorflow-cpu==2.21.0      # use `tensorflow` (GPU build) on a CUDA-capable training box
+numpy
+scikit-learn
+matplotlib
+
+# Computer vision
+opencv-python-headless
+
+# Backend / API
+fastapi
+uvicorn[standard]
+python-multipart
+pillow
+requests
+pydantic
+
+# Edge inference (Jetson) — installed separately via NVIDIA's wheel index,
+# see docker/Dockerfile.jetson. Left here for reference only:
+# tflite-runtime
