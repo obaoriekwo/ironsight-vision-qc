@@ -4,5 +4,4 @@ __pycache__/
 data/
 casting_data/
 casting_512x512/
-models/
 docker/build_log.txt
