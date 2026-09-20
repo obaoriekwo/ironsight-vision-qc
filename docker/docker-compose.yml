@@ -1,0 +1,19 @@
+version: "3.9"
+
+# Local / server orchestration for the dashboard + API.
+# The Jetson edge unit is deployed separately (see Dockerfile.jetson) since
+# it typically runs standalone on the device bolted to the inspection camera,
+# optionally POSTing results back to this dashboard's /api/predict-adjacent
+# logging endpoint over the factory LAN.
+
+services:
+  qc-dashboard:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: ironsight-qc-dashboard:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../models:/app/models:ro
+    restart: unless-stopped

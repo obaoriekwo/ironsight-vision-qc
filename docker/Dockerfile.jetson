@@ -1,0 +1,41 @@
+# ==========================================================================
+# Dockerfile.jetson — arm64 image for NVIDIA Jetson (Nano / Xavier NX / Orin)
+#
+# Builds on NVIDIA's L4T (Linux for Tegra) base image so TensorRT, CUDA,
+# and cuDNN already match the Jetson's flashed JetPack version. This runs
+# ONLY the lightweight real-time camera inference loop (run_camera.py) —
+# not the full dashboard — since the edge unit's job is to watch the line
+# and report verdicts, not host a UI for factory-floor operators.
+#
+# Build (on the Jetson itself, or via cross-compilation with buildx):
+#   docker build -f docker/Dockerfile.jetson -t ironsight-edge .
+# Run (with camera + display passthrough):
+#   docker run --runtime nvidia --device /dev/video0 \
+#       -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix \
+#       ironsight-edge
+# ==========================================================================
+FROM nvcr.io/nvidia/l4t-tensorflow:r35.4.1-tf2.11-py3
+
+WORKDIR /app
+
+# System deps for OpenCV video capture on Tegra
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 \
+    libglib2.0-0 \
+    v4l-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# NOTE: tflite-runtime / TensorFlow are already provided by the l4t-tensorflow
+# base image and are built against the Jetson's JetPack/CUDA version, so we
+# do NOT pip install tensorflow here (that would pull an incompatible x86 wheel).
+RUN pip3 install --no-cache-dir \
+    opencv-python-headless \
+    requests \
+    numpy
+
+COPY src/ ./src/
+COPY models/defect_cnn.tflite ./models/defect_cnn.tflite
+
+WORKDIR /app/src
+ENTRYPOINT ["python3", "run_camera.py", "--model", "../models/defect_cnn.tflite"]
+CMD ["--camera", "0"]
