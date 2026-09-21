@@ -26,6 +26,9 @@ Responsibilities:
                      Explicitly disables caching so every click actually
                      hits the server and gets a fresh random pick,
                      instead of the browser reusing the first response.
+                     Uses Google Cloud Storage when SAMPLE_IMAGES_BUCKET
+                     is set (e.g. on Render), otherwise falls back to a
+                     local data/ folder for local development.
 
 Run:
     uvicorn app:app --host 0.0.0.0 --port 8000 --reload
@@ -33,6 +36,7 @@ Run:
 
 import glob
 import io
+import json
 import os
 import random
 import random as pyrandom
@@ -46,6 +50,8 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from google.cloud import storage
+from google.oauth2 import service_account
 from PIL import Image
 from pydantic import BaseModel
 
@@ -63,6 +69,57 @@ SAMPLE_IMAGE_DIRS = [
     os.path.join(os.path.dirname(__file__), "..", "..", "data", "casting_data", "casting_data", "test", "def_front"),
     os.path.join(os.path.dirname(__file__), "..", "..", "data", "casting_data", "casting_data", "test", "ok_front"),
 ]
+
+# ------------------------------------------------------------------
+# Google Cloud Storage config for sample images. If SAMPLE_IMAGES_BUCKET
+# is set (e.g. on Render), sample images are pulled from GCS instead of
+# the local data/ folder, which isn't present in the deployed repo.
+# ------------------------------------------------------------------
+GCS_BUCKET = os.environ.get("SAMPLE_IMAGES_BUCKET")  # e.g. "ironsight-vision-qc-data"
+GCS_PREFIXES = [
+    "casting_data/casting_data/test/def_front/",
+    "casting_data/casting_data/test/ok_front/",
+]
+_gcs_client = None
+_gcs_blobs_cache = []
+
+
+def _get_gcs_client():
+    global _gcs_client
+    if _gcs_client is None:
+        creds_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+        if creds_json:
+            # Render-friendly: paste the whole service account JSON as one env var,
+            # instead of needing an actual key file on disk.
+            info = json.loads(creds_json)
+            credentials = service_account.Credentials.from_service_account_info(info)
+            _gcs_client = storage.Client(credentials=credentials, project=info.get("project_id"))
+        else:
+            # Falls back to GOOGLE_APPLICATION_CREDENTIALS file path (useful for local dev).
+            _gcs_client = storage.Client()
+    return _gcs_client
+
+
+def _refresh_gcs_blobs():
+    """List and cache all sample image blob names once, instead of listing on every request."""
+    global _gcs_blobs_cache
+    client = _get_gcs_client()
+    bucket = client.bucket(GCS_BUCKET)
+    names = []
+    for prefix in GCS_PREFIXES:
+        for blob in client.list_blobs(bucket, prefix=prefix):
+            if blob.name.lower().endswith((".jpg", ".jpeg", ".png")):
+                names.append(blob.name)
+    _gcs_blobs_cache = names
+    print(f"Loaded {len(names)} sample image blobs from GCS bucket '{GCS_BUCKET}'.")
+
+
+if GCS_BUCKET:
+    try:
+        _refresh_gcs_blobs()
+    except Exception as e:
+        print("Could not list GCS sample images at startup:", e)
+
 
 app = FastAPI(title="Edge Quality Control API")
 app.add_middleware(
@@ -189,11 +246,42 @@ async def sample_image():
     or ok_front) so the 'Try a sample defect' button demoes with genuine,
     varied casting photos instead of a fixed synthetic placeholder.
 
+    Uses Google Cloud Storage if SAMPLE_IMAGES_BUCKET is configured (e.g.
+    on Render), otherwise falls back to the local data/ folder (local dev).
+
     Cache-Control headers are set to prevent the browser from reusing the
     same response for every click — without this, the browser will treat
     repeated GETs to this same URL as identical and just show the first
     image it ever received.
     """
+    headers = {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
+
+    if GCS_BUCKET:
+        if not _gcs_blobs_cache:
+            try:
+                _refresh_gcs_blobs()
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=f"Could not list GCS bucket: {e}")
+        if not _gcs_blobs_cache:
+            raise HTTPException(status_code=404, detail="No sample images available in GCS bucket.")
+
+        chosen_name = pyrandom.choice(_gcs_blobs_cache)
+        client = _get_gcs_client()
+        bucket = client.bucket(GCS_BUCKET)
+        blob = bucket.blob(chosen_name)
+        try:
+            content = blob.download_as_bytes()
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Could not fetch GCS object: {e}")
+
+        content_type = "image/jpeg" if chosen_name.lower().endswith((".jpg", ".jpeg")) else "image/png"
+        return Response(content=content, media_type=content_type, headers=headers)
+
+    # ---- local fallback (unchanged original behavior) ----
     all_images = []
     for d in SAMPLE_IMAGE_DIRS:
         if os.path.isdir(d):
@@ -201,14 +289,7 @@ async def sample_image():
     if not all_images:
         raise HTTPException(status_code=404, detail="No sample images available.")
     chosen = pyrandom.choice(all_images)
-    return FileResponse(
-        chosen,
-        headers={
-            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-            "Pragma": "no-cache",
-            "Expires": "0",
-        },
-    )
+    return FileResponse(chosen, headers=headers)
 
 
 @app.get("/api/stats")
@@ -234,7 +315,6 @@ async def stats():
 
 @app.get("/api/model_report")
 async def model_report():
-    import json
     reports_path = os.path.join(os.path.dirname(__file__), "..", "..", "reports", "metrics.json")
     if not os.path.exists(reports_path):
         return {"available": False}

@@ -13,6 +13,7 @@ uvicorn[standard]
 python-multipart
 pillow
 requests
+google-cloud-storage
 pydantic
 
 # Edge inference (Jetson) — installed separately via NVIDIA's wheel index,
