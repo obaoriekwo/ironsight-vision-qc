@@ -77,8 +77,8 @@ SAMPLE_IMAGE_DIRS = [
 # ------------------------------------------------------------------
 GCS_BUCKET = os.environ.get("SAMPLE_IMAGES_BUCKET")  # e.g. "ironsight-vision-qc-data"
 GCS_PREFIXES = [
-    "casting_data/casting_data/test/def_front/",
-    "casting_data/casting_data/test/ok_front/",
+    "def_front/",
+    "ok_front/",
 ]
 _gcs_client = None
 _gcs_blobs_cache = []
