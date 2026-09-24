@@ -201,6 +201,8 @@ session_stats = {
 def predict_array(img_array):
     """img_array: preprocessed (128, 128, 1) float32 array. Returns (label, confidence)."""
     batch = np.expand_dims(img_array, axis=0)
+    print(f"[DEBUG] input stats: min={img_array.min():.4f} max={img_array.max():.4f} "
+          f"mean={img_array.mean():.4f} shape={img_array.shape} dtype={img_array.dtype}")
 
     if _backend_kind == "keras":
         prob_ok = float(_model.predict(batch, verbose=0)[0][0])
@@ -212,6 +214,8 @@ def predict_array(img_array):
         prob_ok = float(_interpreter.get_tensor(output_details[0]["index"])[0][0])
     else:
         raise RuntimeError("No model loaded yet. Run src/train.py first.")
+
+    print(f"[DEBUG] raw prob_ok={prob_ok:.6f} backend={_backend_kind}")
 
     is_ok = prob_ok >= 0.5
     label = "ok_front" if is_ok else "def_front"
