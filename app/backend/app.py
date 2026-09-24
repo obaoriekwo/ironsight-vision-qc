@@ -75,7 +75,7 @@ SAMPLE_IMAGE_DIRS = [
 # is set (e.g. on Render), sample images are pulled from GCS instead of
 # the local data/ folder, which isn't present in the deployed repo.
 # ------------------------------------------------------------------
-GCS_BUCKET = os.environ.get("SAMPLE_IMAGES_BUCKET")  # e.g. "ironsight-vision-qc-data"
+GCS_BUCKET = os.environ.get("SAMPLE_IMAGES_BUCKET")  # e.g. "ironsight-vision-qc-data-oba21"
 GCS_PREFIXES = [
     "def_front/",
     "ok_front/",
@@ -130,9 +130,12 @@ app.add_middleware(
 )
 
 # ------------------------------------------------------------------
-# Model loading — tries the full Keras model first (best for a dev
-# machine / server), falls back to the quantized TFLite model (what
-# actually ships to the Jetson) if Keras/TF isn't available.
+# Model loading — tries the more portable HDF5 (.h5) format first
+# (less prone to cross-platform/cross-TF-version deserialization
+# quirks than the newer zip-based .keras format, particularly for
+# BatchNormalization layers), falls back to the full .keras model,
+# then to the quantized TFLite model (what actually ships to the
+# Jetson) if neither Keras format is available.
 # ------------------------------------------------------------------
 _model = None
 _interpreter = None
@@ -141,8 +144,19 @@ _backend_kind = None
 
 def load_model():
     global _model, _interpreter, _backend_kind
+    h5_path = os.path.join(MODEL_DIR, "defect_cnn.h5")
     keras_path = os.path.join(MODEL_DIR, "defect_cnn.keras")
     tflite_path = os.path.join(MODEL_DIR, "defect_cnn.tflite")
+
+    try:
+        import tensorflow as tf
+        if os.path.exists(h5_path):
+            _model = tf.keras.models.load_model(h5_path)
+            _backend_kind = "keras"
+            print("Loaded HDF5 (.h5) Keras model.")
+            return
+    except Exception as e:
+        print("HDF5 load failed, will try .keras:", e)
 
     try:
         import tensorflow as tf
